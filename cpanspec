@@ -2,7 +2,7 @@
 #
 # cpanspec - Generate a spec file for a CPAN module
 #
-# Copyright (C) 2004-2009 Steven Pritchard <steve@kspei.com>
+# Copyright (C) 2004-2011 Steven Pritchard <steve@kspei.com>
 # This program is free software; you can redistribute it
 # and/or modify it under the same terms as Perl itself.
 #
@@ -27,13 +27,18 @@ my %EXTRACT_USE_BLACKLIST = map { $_ => 1 } qw(
 
 cpanspec - Generate a spec file for a CPAN module
 
+cpanget - Download a CPAN module
+
 =head1 SYNOPSIS
 
-cpanspec [options] [file [...]]
+cpanspec [options] [module [...]]
+
+cpanget [options] [module [...]]
 
  Options:
    --help       -h      Help message
    --old        -o      Be more compatible with old RHL/FC releases
+   --perl-version   -P  Minimum perl version to support
    --license    -l      Include generated license texts if absent in source
    --noprefix   -n      Don't add perl- prefix to package name
    --force      -f      Force overwriting existing spec
@@ -46,6 +51,7 @@ cpanspec [options] [file [...]]
    --cpan       -c      CPAN mirror URL
    --verbose    -v      Be more verbose
    --prefer-macros  -m  Prefer macros over environment variables in the spec
+   --download-only  -D  Only download the tarball from CPAN
 
  Long options:
    --follow             Process build dependencies
@@ -56,10 +62,24 @@ cpanspec [options] [file [...]]
    --add-buildrequires  Add BuildRequires for this item
    --version            Print the version number and exit
 
+The modules specified on the command line can be either filenames of tarballs,
+or module names as downloadable from CPAN.
+
+=head1 EXAMPLES
+
+cpanspec Linux::Prctl
+
+cpanspec ~/downloads/Acme-MetaSyntactic-0.99.tar.gz
+
+cpanget Module::Build
+
 =head1 DESCRIPTION
 
 B<cpanspec> will generate a spec file to build a rpm from a CPAN-style
 Perl module distribution.
+
+B<cpanget> will download the tarball for a module from CPAN. This
+implies --download-only and ignores most other options.
 
 =head1 OPTIONS
 
@@ -94,6 +114,11 @@ Includes a hack to remove LD_RUN_PATH from Makefile.
 
 =back
 
+=item B<-P>, B<--perl-version>
+
+Include explicit dependencies for core modules when newer versions are
+required than shipped with the specified version.
+
 =item B<-l>, B<--license>
 
 Generate COPYING and Artistic license texts if the source doesn't seem
@@ -110,6 +135,10 @@ the rpm is simply B<cpanspec> instead of B<perl-cpanspec>.
 Force overwriting an existing spec file.  Normally B<cpanspec> will
 refuse to overwrite an existing spec file for safety.  This option
 removes that safety check.  Please use with caution.
+
+=item B<-S>, B<--stdout>
+
+Write the generated spec file to stdout instead of a file.
 
 =item B<-p>, B<--packager>
 
@@ -130,6 +159,12 @@ no epoch will be used in the generated spec.
 Disttag (a string to append to the release number), used to
 differentiate builds for various releases.  Defaults to the
 semi-standard (for Fedora) string C<%{?dist}>.
+
+=item B<-D>, B<--download-only>
+
+Only download the upstream tarball, do not generate a specfile. Most
+other options are ignored as they are only relevant when creating a
+specfile or building a package.
 
 =item B<-s>, B<--srpm>
 
@@ -212,6 +247,7 @@ use File::Basename;
 use LWP::UserAgent;
 use Parse::CPAN::Packages;
 use Pod::Simple::TextContent;
+use Module::CoreList;
 # Apparently gets pulled in by another module.
 #use Cwd;
 
@@ -219,13 +255,16 @@ our %opt;
 
 our $help=0;
 our $compat=0;
+our $perl_version=0;
 our $addlicense=0;
 our $noprefix=0;
 our $force=0;
+our $stdout=0;
 our $packager;
 our $release=1;
 our $epoch;
 our $disttag='%{?dist}';
+our $download_only=(basename($0) eq "cpanget") ? 1 : 0;
 our $buildsrpm=0;
 our $buildrpm=0;
 our $verbose=0;
@@ -267,6 +306,15 @@ my @MACROS = (
 
 # this is set after the parameters are passed
 our %macro;
+
+our %dep_blacklist = (
+    'Win32' => 1,               # We're not on win32
+    'Win32::Process' => 1,      # We're not on win32
+    'Test::Perl::Critic' => 1,  # Too many dependencies
+    'ok' => 1,                  # Side effect of Test::use::ok
+    'BaseClass' => 1,           # Common test class shipped by ourselves
+    'TestServer' => 1,          # Likewise
+);
 
 sub print_version {
     print "$NAME version $VERSION\n";
@@ -350,7 +398,7 @@ sub build_rpm($) {
     my $spec=shift;
     my $dir=getcwd();
 
-    my $rpmbuild=(-x "/usr/bin/rpmbuild" ? "/usr/bin/rpmbuild" : "/bin/rpm");
+    my $rpmbuild=which("rpmbuild","rpm");
 
     verbose("Building " . ($buildrpm ? "rpms" : "source rpm") . " from $spec");
 
@@ -482,8 +530,7 @@ sub get_description(%) {
 sub check_rpm($) {
     my $dep=shift;
 
-    my $rpm="/bin/rpm";
-    return undef if (!-x $rpm);
+    my $rpm=which("rpm");
 
     my @out=`$rpm -q --whatprovides "$dep"`;
 
@@ -498,8 +545,7 @@ sub check_rpm($) {
 sub check_repo($) {
     my $dep=shift;
 
-    my $repoquery="/usr/bin/repoquery";
-    return undef if (!-x $repoquery);
+    my $repoquery=which("repoquery");
 
     verbose("Running $repoquery to check for $dep.  This may take a while...");
     my @out=`$repoquery --whatprovides "$dep"`;
@@ -518,6 +564,15 @@ sub check_dep($) {
     return (check_rpm("perl($module)") || check_repo("perl($module)"));
 }
 
+sub which(@) {
+    for my $bin (@_) {
+        for my $path (split /:/, $ENV{PATH}) {
+            return "$path/$bin" if -x "$path/$bin";
+        }
+    }
+    die("Cannot find " . join(" or ", @_));
+}
+
 # Set locale to en_US.UTF8 so that dates in changelog will be correct
 # if using another locale. Also ensures writing out UTF8. (Thanks to
 # Roy-Magne Mo for pointing out the problem and providing a solution.)
@@ -526,13 +581,16 @@ setlocale(LC_ALL, "en_US.UTF-8");
 GetOptions(
         'help|h'            => \$help,
         'old|o'             => \$compat,
+        'perl-version|P=s'  => \$perl_version,
         'license|l'         => \$addlicense,
         'noprefix|n'        => \$noprefix,
         'force|f'           => \$force,
+        'stdout|S'          => \$stdout,
         'packager|p=s'      => \$packager,
         'release|r=i'       => \$release,
         'epoch|e=i'         => \$epoch,
         'disttag|d=s'       => \$disttag,
+        'download-only|D'   => \$download_only,
         'srpm|s'            => \$buildsrpm,
         'build|b'           => \$buildrpm,
         'cpan|c=s'          => \$cpan,
@@ -560,7 +618,8 @@ if ($follow and $buildrpm) {
 
 my $prefix=$noprefix ? "" : "perl-";
 
-$packager=$packager || `rpm --eval '\%packager'`;
+my $rpm=which("rpm");
+$packager=$packager || `$rpm --eval '\%packager'`;
 
 chomp $packager;
 
@@ -571,19 +630,32 @@ if (!$packager or $packager eq "\%packager") {
 
 our %corelist;
 
-my $rpm=new FileHandle "rpm -q --provides perl|"
-    or warn "Failed to execute rpm: $!\n";
+if($perl_version) {
+    die("Unknown perl version: $perl_version. (Known versions: " . join(", ", keys %Module::CoreList::version) . ")")
+        unless exists $Module::CoreList::version{$perl_version};
+    %corelist = %{ $Module::CoreList::version{$perl_version} };
+}
+else {
+    my $rpm=new FileHandle "rpm -q --provides perl|"
+        or warn "Failed to execute rpm: $!\n";
 
-while (my $provides=<$rpm>) {
-    chomp $provides;
+    while (my $provides=<$rpm>) {
+        chomp $provides;
 
-    if ($provides=~/^perl\(([^\)]+)\)(?:\s+=\s+(\S+))\s*$/) {
-        $corelist{$1}=defined($2) ? $2 : 0;
+        if ($provides=~/^perl\(([^\)]+)\)(?:\s+=\s+(\S+))\s*$/) {
+            $corelist{$1}=defined($2) ? $2 : 0;
+        }
     }
 }
 
 my @args=@ARGV;
 my @processed=();
+
+update_packages();
+$packages=Parse::CPAN::Packages->new($pkgdetails)
+    if (!defined($packages));
+die "Parse::CPAN::Packages->new() failed: $!\n"
+    if (!defined($packages));
 
 for my $file (@args) {
     my ($name,$version,$type);
@@ -606,16 +678,12 @@ for my $file (@args) {
         $file =~ s/-/::/g;
 
         # Look up $file in 02packages.details.txt.
-        update_packages();
-        $packages=Parse::CPAN::Packages->new($pkgdetails)
-            if (!defined($packages));
-        die "Parse::CPAN::Packages->new() failed: $!\n"
-            if (!defined($packages));
         my ($m,$d);
         if ($m=$packages->package($file) and $d=$m->distribution()) {
             $source=$cpan . "/authors/id/" . $d->prefix();
             $file=basename($d->filename());
             fetch($source, $file);
+            next if $download_only;
             $name=$d->dist();
             $version=$d->version();
             $version=~s/^v\.?//;
@@ -804,7 +872,9 @@ for my $file (@args) {
     verbose "Writing $specfile...";
 
     my $spec;
-    if ($force) {
+    if ($stdout) {
+        $spec = *STDOUT;
+    } elsif ($force) {
         rename($specfile, "$specfile~") if (-e $specfile);
         $spec=new FileHandle ">$specfile";
     } else {
@@ -822,7 +892,18 @@ for my $file (@args) {
     my $license="";
 
     # TODO It's possible these need to be listed instead of just detected.
-    my $scripts=(grep /^(?:bin|scripts)\//, @files);
+    my $uses_autoinstall = grep /Module\/AutoInstall.pm/, @files;
+    my $scripts=(grep /^(?:bin|scripts?|tools)\//, @files);
+    my $makecontent;
+    if (grep /^Makefile\.PL$/, @files
+        and $makecontent=extract($archive, $type, "$path/Makefile.PL")) {
+        $scripts ||= $makecontent =~ 'install_script';
+        $scripts ||= ($makecontent =~ /EXE_FILES/ && $makecontent !~ /EXE_FILES.*\[\s*(qw\(\s*\)\s*)?\]/) ? 1 : 0;
+    }
+    if (grep /^Build\.PL$/, @files
+        and $makecontent=extract($archive, $type, "$path/Build.PL")) {
+        $scripts ||= $makecontent =~ 'script_files';
+    }
     my (%build_requires,%requires);
     my ($yml,$meta);
     if (grep /^META\.yml$/, @files
@@ -836,6 +917,7 @@ for my $file (@args) {
         }
 
         %build_requires=%{$meta->{build_requires}} if ($meta->{build_requires});
+        %build_requires=(%build_requires, %{$meta->{configure_requires}}) if ($meta->{configure_requires});
         %requires=%{$meta->{requires}} if ($meta->{requires});
         if ($meta->{recommends}) {
             for my $dep (keys(%{$meta->{recommends}})) {
@@ -905,6 +987,7 @@ for my $file (@args) {
                      or $_ =~ /^t\/.*\.t$/
                  } @files;
        use Module::ExtractUse;
+       my %bogus_dep=();
        for my $testfile (@tests) {
            my $extract_o_matic=Module::ExtractUse->new()
                or die "Module::ExtractUse->new failed: $!\n";
@@ -917,15 +1000,30 @@ for my $file (@args) {
            #print STDERR "$testfile: @{[$extract_o_matic->array()]}\n";
            for my $dep ($extract_o_matic->array()) {
                next if ($dep eq $module);
+               next if exists $build_requires{$dep};
+               next if exists $bogus_dep{$dep};
                next if ($EXTRACT_USE_BLACKLIST{$dep});
-               $build_requires{$dep}=0;
+               my $package = $packages->package($dep);
+               if (!defined($package)) {
+                   $bogus_dep{$dep}++;
+                   # Don't print this for common false positives
+                   unless ($dep =~ /^(Config|base|5|lib)/) {
+                       verbose("Module not on CPAN, not adding dependency: $dep");
+                   }
+                   next;
+               }
+               if ($package->distribution->dist eq $name) {
+                   #verbose("Dependency $dep provided by ourselves, not adding dependency");
+                   next;
+               }
+               $build_requires{$dep} ||= 0;
            }
         }
     }
 
     my $builder;
     if (grep /^Build\.PL$/, @files) {
-        $build_requires{'Module::Build'}=0;
+        $build_requires{'Module::Build'} ||= 0;
         $builder='Module::Build';
     } else {
         my $makefilepl=extract($archive, $type, "$path/Makefile.PL")
@@ -934,7 +1032,7 @@ for my $file (@args) {
             $builder='Module::Install';
         }
         else {
-            $build_requires{'ExtUtils::MakeMaker'}=0;
+            $build_requires{'ExtUtils::MakeMaker'} ||= 0;
             $builder='ExtUtils::MakeMaker';
         }
         # If EXE_FILES is set, make sure $scripts is set
@@ -1024,6 +1122,7 @@ END
     }
 
     if (defined($build_requires{perl})) {
+        $build_requires{perl} =~ s/^[<>=]+ *//;
         printf $spec "%-16s%s >= %s\n", "BuildRequires:", "perl",
             (($build_requires{perl} lt "5.6.0" ? "0:" : "1:")
             . $build_requires{perl}) if $build_requires{perl};
@@ -1035,7 +1134,8 @@ END
     }
 
     for my $dep (sort(keys(%build_requires))) {
-        if (exists($corelist{$dep})) {
+        next if exists $dep_blacklist{$dep};
+        if (exists($corelist{$dep}) && $corelist{$dep} ge $build_requires{$dep}) {
             next if (!$compat);
         } elsif ($follow) {
             if ($dep ne $module and !(grep { $_ eq $dep } @processed, @args)) {
@@ -1137,6 +1237,12 @@ END
 
 \%build
 END
+
+    if($uses_autoinstall) {
+        print $spec <<END
+export PERL_AUTOINSTALL="--skipdeps"
+END
+    }
 
     if ($builder eq 'Module::Build') {
         print $spec <<END;
