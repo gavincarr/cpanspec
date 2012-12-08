@@ -1195,7 +1195,7 @@ Source99:       $name-filter-provides.sh
 END
     }
 
-printf $spec "\%{?perl_default_filter}\n" if (!$noarch);
+printf $spec "\n\%{?perl_default_filter}\n" if (!$noarch);
 
     my $buildpath=$path;
     $buildpath=~s/$version/\%{version}/;
