@@ -1322,7 +1322,6 @@ rm -rf $macro{buildroot}@{[
     (@filter_provides ? ' %{__perl_provides}' : '')]}
 
 \%files
-\%defattr(-,root,root,-)
 \%doc @doc
 END
 
