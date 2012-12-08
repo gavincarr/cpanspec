@@ -1287,9 +1287,6 @@ find $macro{buildroot} -type f -name '*.bs' -size 0 -exec rm -f {} \\;
 END
 }
 
-    print $spec <<END;
-find $macro{buildroot} -depth -type d -exec rmdir {} 2>/dev/null \\;
-
 \%{_fixperms} $macro{buildroot}/*
 
 END
