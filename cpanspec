@@ -13,7 +13,7 @@
 # $Id: cpanspec,v 1.68 2009/01/22 01:48:06 stevenpritchard Exp $
 
 our $NAME="cpanspec";
-our $VERSION='1.79';
+our $VERSION='1.80';
 
 # Modules to exclude from Module::ExtractUser BuildRequires (typically author tests)
 my %EXTRACT_USE_BLACKLIST = map { $_ => 1 } qw(
@@ -1111,7 +1111,6 @@ License:        $license
 Group:          Development/Libraries
 URL:            $url
 Source0:        $source
-BuildRoot:      \%{_tmppath}/\%{name}-\%{version}-\%{release}-root-\%(\%{__id_u} -n)
 END
 
     printf $spec "%-16s%s\n", "BuildArch:", "noarch" if ($noarch);
@@ -1178,9 +1177,6 @@ END
         printf $spec "%-16s%s\n", "Provides:", $prov;
     }
 
-    # Add explicit AutoReq: no
-    printf $spec "%-16s%s\n", "Autoreq:", 'no';
-
     if (@filter_requires) {
         print $spec <<END
 
@@ -1198,6 +1194,8 @@ Source99:       $name-filter-provides.sh
 \%define __perl_provides \%{_tmppath}/\%{name}-\%{version}-\%{release}-\%(\%{__id_u} -n)-filter-provides
 END
     }
+
+printf $spec "\n\%{?perl_default_filter}\n" if (!$noarch);
 
     my $buildpath=$path;
     $buildpath=~s/$version/\%{version}/;
@@ -1270,8 +1268,6 @@ END
     print $spec <<END;
 
 \%install
-rm -rf $macro{buildroot}
-
 END
 
     if ($builder eq 'Module::Build') {
@@ -1279,7 +1275,7 @@ END
             "./Build install destdir=$macro{buildroot} create_packlist=0\n";
     } else {
         print $spec <<END;
-make pure_install PERL_INSTALL_ROOT=$macro{buildroot}
+make pure_install DESTDIR=$macro{buildroot}
 
 find $macro{buildroot} -type f -name .packlist -exec rm -f {} \\;
 END
@@ -1290,9 +1286,8 @@ END
 find $macro{buildroot} -type f -name '*.bs' -size 0 -exec rm -f {} \\;
 END
 }
-
+    
     print $spec <<END;
-find $macro{buildroot} -depth -type d -exec rmdir {} 2>/dev/null \\;
 
 \%{_fixperms} $macro{buildroot}/*
 
@@ -1319,13 +1314,7 @@ END
 
     print $spec <<END;
 
-\%clean
-rm -rf $macro{buildroot}@{[
-    (@filter_requires ? ' %{__perl_requires}' : '') .
-    (@filter_provides ? ' %{__perl_provides}' : '')]}
-
 \%files
-\%defattr(-,root,root,-)
 \%doc @doc
 END
 
