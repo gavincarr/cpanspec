@@ -13,7 +13,7 @@
 # $Id: cpanspec,v 1.68 2009/01/22 01:48:06 stevenpritchard Exp $
 
 our $NAME="cpanspec";
-our $VERSION='1.79';
+our $VERSION='1.80';
 
 # Modules to exclude from Module::ExtractUser BuildRequires (typically author tests)
 my %EXTRACT_USE_BLACKLIST = map { $_ => 1 } qw(
