@@ -1266,8 +1266,6 @@ END
     print $spec <<END;
 
 \%install
-rm -rf $macro{buildroot}
-
 END
 
     if ($builder eq 'Module::Build') {
