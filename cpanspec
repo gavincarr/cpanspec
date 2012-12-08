@@ -1275,7 +1275,7 @@ END
             "./Build install destdir=$macro{buildroot} create_packlist=0\n";
     } else {
         print $spec <<END;
-make pure_install PERL_INSTALL_ROOT=$macro{buildroot}
+make pure_install DESTDIR=$macro{buildroot}
 
 find $macro{buildroot} -type f -name .packlist -exec rm -f {} \\;
 END
