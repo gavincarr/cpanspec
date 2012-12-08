@@ -1284,6 +1284,8 @@ END
 find $macro{buildroot} -type f -name '*.bs' -size 0 -exec rm -f {} \\;
 END
 }
+    
+    print $spec <<END;
 
 \%{_fixperms} $macro{buildroot}/*
 
